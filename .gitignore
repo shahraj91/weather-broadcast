@@ -1,0 +1,31 @@
+# Credentials — never commit
+.env
+
+# Personal / local Claude config
+CLAUDE.local.md
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Database files
+data/
+*.db
+
+# Runtime logs
+weather_broadcast.log
+
+# User import data (may contain real phone numbers)
+users_to_add.csv
+
+# Archive / backup copies
+weather-broadcast-final/
+weather-broadcast-final.tar.gz
+
+# Other
+*.docx
+Twilio.txt
+twilio_2FA_recovery_code.txt
