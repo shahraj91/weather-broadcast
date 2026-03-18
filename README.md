@@ -88,23 +88,23 @@ Timezone and unit system are resolved automatically from `lat`/`lon`.
 
 ## Available scripts
 
-| Script | Description |
-|--------|-------------|
-| `python3 main.py` | Start the blocking scheduler (production) |
-| `python3 database/seed.py` | Seed 10 global test users |
-| `python3 add_users.py` | Bulk-import users from `users_to_add.csv` |
-| `python3 list_users.py` | List all active users |
-| `python3 list_users.py --all` | List all users including inactive |
-| `python3 list_users.py Raj` | Search users by name |
-| `python3 list_users.py +14155552671` | Search users by phone |
-| `python3 list_sends.py` | Show last 20 send logs |
-| `python3 list_sends.py --all` | Full send history |
-| `python3 list_sends.py --failed` | Show only failed sends |
-| `python3 list_sends.py Raj` | Send history for a user by name |
-| `python3 list_sends.py +14155552671` | Send history for a user by phone |
-| `python3 send_now.py` | Trigger broadcast for all active timezones immediately |
-| `python3 send_now.py Raj` | Trigger broadcast for a user by name |
-| `python3 send_now.py +14155552671` | Trigger broadcast for a user by phone |
+| Script                                    | Description |
+|-------------------------------------------|-------------|
+| `python3 main.py`                         | Start the blocking scheduler (production) |
+| `python3 database/seed.py`                | Seed 10 global test users |
+| `python3 add_users.py`                    | Bulk-import users from `users_to_add.csv` |
+| `python3 list_users.py`                   | List all active users |
+| `python3 list_users.py --all`             | List all users including inactive |
+| `python3 list_users.py <NAME>`            | Search users by name |
+| `python3 list_users.py +14155552671`      | Search users by phone |
+| `python3 list_sends.py`                   | Show last 20 send logs |
+| `python3 list_sends.py --all`             | Full send history |
+| `python3 list_sends.py --failed`          | Show only failed sends |
+| `python3 list_sends.py <NAME>`            | Send history for a user by name |
+| `python3 list_sends.py +14155552671`      | Send history for a user by phone |
+| `python3 send_now.py`                     | Trigger broadcast for all active timezones immediately |
+| `python3 send_now.py <NAME>`              | Trigger broadcast for a user by name |
+| `python3 send_now.py +14155552671`        | Trigger broadcast for a user by phone |
 | `python3 send_now.py America/Los_Angeles` | Trigger broadcast for a timezone |
 
 ---
