@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from database.db import Database
-from scheduler import run_timezone_job
+from scheduler import run_timezone_job, run_user_job
 
 DB_PATH = os.getenv("DB_PATH", "./data/weather_broadcast.db")
 
@@ -61,7 +61,7 @@ def send_for_phone(phone: str):
         sys.exit(1)
 
     print(f"  Found user — timezone: {user.timezone}, units: {user.unit_system}")
-    send_for_timezone(user.timezone)
+    run_user_job(user, DB_PATH)
     _print_sandbox_reminder(unapproved)
 
 
@@ -85,7 +85,7 @@ def send_for_name(name: str):
     db.close()
 
     print(f"  Found {user.name} ({user.phone}) — {user.timezone} / {user.unit_system}")
-    send_for_timezone(user.timezone)
+    run_user_job(user, DB_PATH)
     _print_sandbox_reminder(unapproved)
 
 

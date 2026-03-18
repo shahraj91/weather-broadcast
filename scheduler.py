@@ -24,6 +24,84 @@ SEND_HOUR   = 7
 SEND_MINUTE = 30
 
 
+def _send_to_user(user, db: Database):
+    """
+    Fetch weather, generate a message, send it, and log the result for a single user.
+    All exceptions are caught and logged; nothing is re-raised.
+    """
+    try:
+        weather = get_forecast(
+            lat=user.lat,
+            lon=user.lon,
+            unit_system=user.unit_system,
+            timezone=user.timezone,
+        )
+        message = generate(weather, name=user.name)
+        sid = broadcaster.send_to_user(user, message)
+        db.log_send(SendLog(
+            user_id=user.id,
+            status="success",
+            message_sid=sid,
+            message_body=message,
+        ))
+        logger.info("✓ Sent to %s (SID: %s)", user.phone, sid)
+
+    except SandboxOptInError:
+        db.log_send(SendLog(
+            user_id=user.id,
+            status="skipped",
+            error="sandbox_opt_in_required",
+            retryable=False,
+        ))
+
+    except WeatherFetchError as e:
+        logger.error("Weather fetch failed for user %s: %s", user.id, e)
+        db.log_send(SendLog(
+            user_id=user.id,
+            status="failed",
+            error=f"WeatherFetchError: {e}",
+            retryable=True,
+        ))
+
+    except FormatterError as e:
+        logger.error("Formatter failed for user %s: %s", user.id, e)
+        db.log_send(SendLog(
+            user_id=user.id,
+            status="failed",
+            error=f"FormatterError: {e}",
+            retryable=True,
+        ))
+
+    except BroadcasterError as e:
+        logger.error("Broadcast failed for user %s: %s", user.id, e)
+        db.log_send(SendLog(
+            user_id=user.id,
+            status="failed",
+            error=f"BroadcasterError: {e}",
+            retryable=True,
+        ))
+
+    except Exception as e:
+        logger.exception("Unexpected error for user %s: %s", user.id, e)
+        db.log_send(SendLog(
+            user_id=user.id,
+            status="failed",
+            error=f"UnexpectedError: {e}",
+            retryable=False,
+        ))
+
+
+def run_user_job(user, db_path: str):
+    """Send a weather message to a single user. Used by send_now.py for name/phone lookups."""
+    logger.info("▶ Manual send for user: %s", user.phone)
+    db = Database(db_path)
+    try:
+        _send_to_user(user, db)
+    finally:
+        db.close()
+        logger.info("◀ Manual send complete for user: %s", user.phone)
+
+
 def run_timezone_job(timezone: str, db_path: str):
     """
     Called by APScheduler at 07:30 for a specific timezone.
@@ -41,74 +119,7 @@ def run_timezone_job(timezone: str, db_path: str):
         logger.info("Processing %d user(s) in %s", len(users), timezone)
 
         for user in users:
-            try:
-                # 1. Fetch weather
-                weather = get_forecast(
-                    lat=user.lat,
-                    lon=user.lon,
-                    unit_system=user.unit_system,
-                    timezone=user.timezone,
-                )
-
-                # 2. Generate message
-                message = generate(weather, name=user.name)
-
-                # 3. Send (raises SandboxOptInError if user hasn't joined sandbox)
-                sid = broadcaster.send_to_user(user, message)
-
-                # 4. Log success
-                db.log_send(SendLog(
-                    user_id=user.id,
-                    status="success",
-                    message_sid=sid,
-                    message_body=message,
-                ))
-                logger.info("✓ Sent to %s (SID: %s)", user.phone, sid)
-
-            except SandboxOptInError:
-                # Sandbox opt-in missing — log as skipped, not failed
-                db.log_send(SendLog(
-                    user_id=user.id,
-                    status="skipped",
-                    error="sandbox_opt_in_required",
-                    retryable=False,
-                ))
-
-            except WeatherFetchError as e:
-                logger.error("Weather fetch failed for user %s: %s", user.id, e)
-                db.log_send(SendLog(
-                    user_id=user.id,
-                    status="failed",
-                    error=f"WeatherFetchError: {e}",
-                    retryable=True,
-                ))
-
-            except FormatterError as e:
-                logger.error("Formatter failed for user %s: %s", user.id, e)
-                db.log_send(SendLog(
-                    user_id=user.id,
-                    status="failed",
-                    error=f"FormatterError: {e}",
-                    retryable=True,
-                ))
-
-            except BroadcasterError as e:
-                logger.error("Broadcast failed for user %s: %s", user.id, e)
-                db.log_send(SendLog(
-                    user_id=user.id,
-                    status="failed",
-                    error=f"BroadcasterError: {e}",
-                    retryable=True,
-                ))
-
-            except Exception as e:
-                logger.exception("Unexpected error for user %s: %s", user.id, e)
-                db.log_send(SendLog(
-                    user_id=user.id,
-                    status="failed",
-                    error=f"UnexpectedError: {e}",
-                    retryable=False,
-                ))
+            _send_to_user(user, db)
 
     finally:
         db.close()
