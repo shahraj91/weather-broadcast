@@ -102,6 +102,18 @@ class Database:
             conn.commit()
             logger.info("Migrated send_logs table: added 'message_body' column")
 
+        # Migration: add activity columns if they don't exist
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+        for col, definition in [
+            ("activity",             "ALTER TABLE users ADD COLUMN activity TEXT"),
+            ("activity_notes",       "ALTER TABLE users ADD COLUMN activity_notes TEXT"),
+            ("conversation_context", "ALTER TABLE users ADD COLUMN conversation_context TEXT"),
+        ]:
+            if col not in existing_cols:
+                conn.execute(definition)
+                conn.commit()
+                logger.info("Migrated users table: added '%s' column", col)
+
         logger.info("Database initialised at %s", self.db_path)
 
     # ──────────────────────────────────────────
@@ -113,10 +125,12 @@ class Database:
         conn = self.connect()
         cursor = conn.execute(
             """INSERT INTO users
-               (phone, lat, lon, timezone, unit_system, country_code, name, active, sandbox_opted_in)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (phone, lat, lon, timezone, unit_system, country_code, name, active, sandbox_opted_in,
+                activity, activity_notes, conversation_context)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user.phone, user.lat, user.lon, user.timezone, user.unit_system,
-             user.country_code, user.name, int(user.active), int(user.sandbox_opted_in))
+             user.country_code, user.name, int(user.active), int(user.sandbox_opted_in),
+             user.activity, user.activity_notes, user.conversation_context)
         )
         conn.commit()
         logger.info("Added user phone=%s timezone=%s", user.phone, user.timezone)
@@ -189,6 +203,37 @@ class Database:
     # Helpers
     # ──────────────────────────────────────────
 
+    def update_activity(self, phone: str, activity: str, notes: Optional[str] = None) -> bool:
+        """Set a user's activity type and optional notes. Returns True if found."""
+        conn = self.connect()
+        cursor = conn.execute(
+            "UPDATE users SET activity = ?, activity_notes = ? WHERE phone = ?",
+            (activity, notes, phone)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def update_conversation_context(self, phone: str, context_json: str) -> bool:
+        """Persist the serialised conversation context for a user. Returns True if found."""
+        conn = self.connect()
+        cursor = conn.execute(
+            "UPDATE users SET conversation_context = ? WHERE phone = ?",
+            (context_json, phone)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_user_conversation_context(self, phone: str) -> dict:
+        """Return the conversation context for a user as a parsed dict (empty dict if none)."""
+        import json
+        user = self.get_user_by_phone(phone)
+        if not user or not user.conversation_context:
+            return {}
+        try:
+            return json.loads(user.conversation_context)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
     @staticmethod
     def _row_to_user(row: sqlite3.Row) -> User:
         keys = row.keys()
@@ -203,4 +248,7 @@ class Database:
             name=row["name"],
             active=bool(row["active"]),
             sandbox_opted_in=bool(row["sandbox_opted_in"]) if "sandbox_opted_in" in keys else False,
+            activity=row["activity"] if "activity" in keys else None,
+            activity_notes=row["activity_notes"] if "activity_notes" in keys else None,
+            conversation_context=row["conversation_context"] if "conversation_context" in keys else None,
         )

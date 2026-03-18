@@ -52,9 +52,38 @@ Rules:
 - Do NOT include any preamble, intro line, or meta-commentary (e.g. "Here is...", "Sure!", "Of course!") — start the message directly with the greeting"""
 
 
-def _build_user_prompt(weather: dict, name: Optional[str] = None) -> str:
+_ACTIVITY_HINTS = {
+    "runner": (
+        "The recipient is a runner. Add a short note on the best time window to run today "
+        "based on temperature and wind, and mention the feels-like temperature if it matters."
+    ),
+    "cyclist": (
+        "The recipient is a cyclist. Add a short note on the best time window to cycle, "
+        "wind speed and direction impact, and feels-like temperature."
+    ),
+    "farmer": (
+        "The recipient is a farmer. Add a short note on total expected rainfall today and "
+        "any frost risk, and what it means for crops or livestock."
+    ),
+    "photographer": (
+        "The recipient is a photographer. Add a short note on golden hour timing, "
+        "cloud cover quality for photography, and visibility conditions."
+    ),
+    "parent": (
+        "The recipient is a parent. Add a short note on morning commute/school-run "
+        "conditions and what afternoon pickup conditions will be like."
+    ),
+    "general": None,   # No extra activity hint — standard morning update
+}
+
+
+def _build_user_prompt(weather: dict, user=None) -> str:
+    name = getattr(user, "name", None)
+    activity = getattr(user, "activity", None)
+    activity_notes = getattr(user, "activity_notes", None)
+
     recipient = f"  Recipient name:   {name}\n" if name else ""
-    return (
+    base = (
         f"Weather data for today:\n"
         f"{recipient}"
         f"  Temperature high: {weather['temp_max']}{weather['temp_unit']}\n"
@@ -64,6 +93,15 @@ def _build_user_prompt(weather: dict, name: Optional[str] = None) -> str:
         f"  Humidity:         {weather['humidity']}%\n"
         f"  Unit system:      {weather['unit_system']}\n"
     )
+
+    if activity and activity in _ACTIVITY_HINTS:
+        hint = _ACTIVITY_HINTS[activity]
+        if hint:   # None for "general" — no extra context added
+            if activity_notes:
+                hint += f" Note about this user: {activity_notes}"
+            base += f"\n  Activity context: {hint}\n"
+
+    return base
 
 
 def _strip_preamble(text: str) -> str:
@@ -156,12 +194,14 @@ def _static_fallback(weather: dict) -> str:
     return message
 
 
-def generate(weather: dict, name: Optional[str] = None) -> str:
+def generate(weather: dict, user=None) -> str:
     """
     Generate a WhatsApp-ready weather message with trivia.
 
     Args:
         weather: Dict returned by weather.fetcher.get_forecast()
+        user:    Optional User dataclass. If provided, name and activity context
+                 are used to personalise the message.
 
     Returns:
         Formatted message string ready to send via WhatsApp.
@@ -172,7 +212,7 @@ def generate(weather: dict, name: Optional[str] = None) -> str:
     if not isinstance(weather, dict) or "temp_max" not in weather:
         raise FormatterError("Invalid weather data passed to formatter")
 
-    user_prompt = _build_user_prompt(weather, name)
+    user_prompt = _build_user_prompt(weather, user)
     message = _call_llama(user_prompt)
 
     header = "📬 Daily Weather Update from Raj\n\n"

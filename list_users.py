@@ -27,18 +27,22 @@ def print_user(row):
     if opted_in is None:
         opted_in_str = "—"
     else:
-        opted_in_str = "✓ yes" if opted_in else "✗ no (messages will be skipped)"
+        opted_in_str = "✓ opted in" if opted_in else "✗ not opted in"
+    activity       = row["activity"]       if "activity"       in keys else None
+    activity_notes = row["activity_notes"] if "activity_notes" in keys else None
     print(f"""
-  ID:            {row['id']}
-  Name:          {name}
-  Phone:         {row['phone']}
-  Location:      {row['lat']}, {row['lon']}
-  Timezone:      {row['timezone']}
-  Units:         {row['unit_system']}
-  Country:       {row['country_code'] or '—'}
-  Status:        {active}
+  ID:             {row['id']}
+  Name:           {name}
+  Phone:          {row['phone']}
+  Location:       {row['lat']}, {row['lon']}
+  Timezone:       {row['timezone']}
+  Units:          {row['unit_system']}
+  Country:        {row['country_code'] or '—'}
+  Status:         {active}
   Sandbox opt-in: {opted_in_str}
-  Added:         {row['created_at']}""")
+  Activity:       {activity or '—'}
+  Notes:          {activity_notes or '—'}
+  Added:          {row['created_at']}""")
     print("  " + "─" * 40)
 
 

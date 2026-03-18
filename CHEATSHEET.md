@@ -223,3 +223,52 @@ python3 -c "from database.db import Database; db = Database('./data/weather_broa
 ollama serve &
 ollama pull llama3   # first time only
 ```
+
+---
+
+## 💬 Two-Way Conversation
+
+```bash
+# Start webhook (requires WEBHOOK_ENABLED=true in .env)
+python3 main.py
+
+# Expose locally with ngrok (separate terminal)
+ngrok http 5000
+```
+
+**Connect to Twilio:**
+1. Copy your ngrok HTTPS URL (e.g. `https://abc123.ngrok.io`)
+2. Twilio Console → Messaging → Try it out → Send a WhatsApp message →
+   Sandbox Settings → "When a message comes in" → paste URL + `/webhook`
+3. Send any WhatsApp message to your sandbox number to test
+
+**Health check:**
+```bash
+curl http://localhost:5000/health
+```
+
+**Supported intents (auto-detected by Llama):**
+- `WEATHER_QUERY` — "Will it rain today?", "Hot tomorrow?"
+- `ACTIVITY_UPDATE` — "I'm a runner", "I cycle to work"
+- `WEATHER_NOW` — "What's the weather now?"
+- `UNSUBSCRIBE` — "stop", "unsubscribe", "cancel"
+- `GENERAL` — anything else
+
+---
+
+## ⚠️ Risk Alerts
+
+Risk alerts are sent as a **separate message** immediately after the morning broadcast when thresholds are crossed.
+
+**Triggers:**
+- Temp high > 35°C / 95°F — extreme heat
+- Temp low < -10°C / 14°F — dangerous cold
+- Wind > 60 km/h / 37.3 mph — strong winds
+- Condition contains "thunderstorm"
+- Humidity > 90% AND foggy conditions
+- Temp high > 30°C / 86°F AND humidity > 70% — heat index
+
+**Logged in `send_logs` with `status="risk_alert"`:**
+```bash
+python3 list_sends.py --all   # risk_alert entries visible here
+```

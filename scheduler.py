@@ -17,6 +17,7 @@ from weather.fetcher import get_forecast, WeatherFetchError
 from messaging.formatter import generate, FormatterError
 from messaging import broadcaster
 from messaging.broadcaster import BroadcasterError, SandboxOptInError
+from conversation.risk_engine import check_risks, format_risk_alert
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def _send_to_user(user, db: Database):
             unit_system=user.unit_system,
             timezone=user.timezone,
         )
-        message = generate(weather, name=user.name)
+        message = generate(weather, user=user)
         sid = broadcaster.send_to_user(user, message)
         db.log_send(SendLog(
             user_id=user.id,
@@ -45,6 +46,22 @@ def _send_to_user(user, db: Database):
             message_body=message,
         ))
         logger.info("✓ Sent to %s (SID: %s)", user.phone, sid)
+
+        # Risk alert — sent as a separate message after the regular morning message
+        risks = check_risks(user, weather)
+        if risks:
+            try:
+                alert = format_risk_alert(user, weather, risks)
+                alert_sid = broadcaster.send_to_user(user, alert)
+                db.log_send(SendLog(
+                    user_id=user.id,
+                    status="risk_alert",
+                    message_sid=alert_sid,
+                    message_body=alert,
+                ))
+                logger.info("⚠ Risk alert sent to %s (SID: %s)", user.phone, alert_sid)
+            except Exception as e:
+                logger.error("Risk alert failed for user %s: %s", user.id, e)
 
     except SandboxOptInError:
         db.log_send(SendLog(

@@ -18,6 +18,9 @@ class User:
     active: bool = True
     sandbox_opted_in: bool = False      # Must be True before Twilio sandbox will deliver messages
     id: Optional[int] = None
+    activity: Optional[str] = None      # e.g. "runner", "farmer", "photographer", "parent", "cyclist", "general"
+    activity_notes: Optional[str] = None  # free text e.g. "runs every morning at 6am"
+    conversation_context: Optional[str] = None  # last few messages as JSON string
 
     def __post_init__(self):
         if self.unit_system not in ("metric", "imperial"):

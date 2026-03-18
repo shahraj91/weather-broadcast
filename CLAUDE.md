@@ -29,6 +29,11 @@ weather-broadcast/
 ├── messaging/broadcaster.py   # Twilio WhatsApp sender + retry logic
 ├── utils/timezone_resolver.py # lat/lon → IANA timezone (timezonefinder)
 ├── utils/unit_resolver.py     # lat/lon → imperial/metric (geopy)
+├── webhook.py                 # Flask webhook server for inbound WhatsApp
+├── conversation/__init__.py
+├── conversation/handler.py    # Intent detection + response engine
+├── conversation/risk_engine.py # Risk rule evaluation + alert formatting
+├── migrate_activity.py        # Adds activity columns to existing DB
 ├── tests/                     # Full pytest suite, all external deps mocked
 ├── .env                       # Credentials — never commit
 └── docs/                      # Architecture and design docs
@@ -127,6 +132,35 @@ they need to send whenever a send is triggered and opt-in is missing.
 - `LLAMA_MODEL` (default: `llama3`)
 - `LLAMA_TIMEOUT` (default: `60` seconds)
 - `DB_PATH` (default: `./data/weather_broadcast.db`)
+- `WEBHOOK_ENABLED` (default: `false`) — set to `true` to start the Flask server
+- `WEBHOOK_PORT` (default: `5000`) — port Flask listens on
+- `NGROK_ENABLED` (default: `false`) — reminder flag; ngrok must be started manually
+
+## Webhook Setup
+The inbound webhook lets users reply to their morning message and trigger two-way conversation.
+
+**Local exposure with ngrok:**
+1. Set `WEBHOOK_ENABLED=true` in `.env`
+2. Start the system: `python3 main.py`
+3. In a second terminal: `ngrok http 5000`
+4. Copy the ngrok HTTPS URL (e.g. `https://abc123.ngrok.io`)
+5. In Twilio Console → Messaging → Try it out → Send a WhatsApp message →
+   Sandbox Settings → "When a message comes in" → paste URL + `/webhook`
+
+**Health check:** `curl http://localhost:5000/health`
+
+## Risk Alerts
+Risk alerts are evaluated after every morning message and sent as a separate WhatsApp message if any threshold is crossed.
+
+**Trigger conditions:**
+- Temperature high > 35°C (95°F) — extreme heat
+- Temperature low < -10°C (14°F) — dangerous cold
+- Wind speed > 60 km/h (37.3 mph) — strong winds
+- Condition contains "thunderstorm"
+- Humidity > 90% AND condition contains "fog" — dense fog
+- Temperature high > 30°C (86°F) AND humidity > 70% — heat index
+
+**Behaviour:** sent immediately after the morning message as a separate Twilio send; logged in `send_logs` with `status="risk_alert"`.
 
 ## Reference Docs
 - Architecture overview: `docs/architecture.md`

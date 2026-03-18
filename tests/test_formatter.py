@@ -6,6 +6,7 @@ Llama subprocess calls are mocked — no model required.
 import pytest
 from unittest.mock import patch, MagicMock
 from messaging.formatter import generate, FormatterError, _static_fallback
+from database.models import User
 
 
 class TestGenerateWithLlama:
@@ -124,3 +125,60 @@ class TestStaticFallback:
         result = _static_fallback(weather_metric)
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+class TestActivityHints:
+    """Verify activity-specific context is injected into the Llama prompt."""
+
+    _LLAMA_REPLY = (
+        "Good morning! Partly cloudy day ahead. 🌤️\n\n"
+        "🌟 Fun Fact: Raindrops are shaped like hamburger buns, not teardrops!"
+    )
+
+    def _make_user(self, activity: str) -> User:
+        return User(
+            id=1,
+            phone="+14155550100",
+            lat=37.7749,
+            lon=-122.4194,
+            timezone="America/Los_Angeles",
+            unit_system="metric",
+            name="Test",
+            activity=activity,
+        )
+
+    def _captured_prompt(self, weather, user) -> str:
+        """Run generate() and return the prompt that was passed to _call_llama."""
+        with patch("messaging.formatter._call_llama") as mock_llama:
+            mock_llama.return_value = self._LLAMA_REPLY
+            generate(weather, user=user)
+            return mock_llama.call_args[0][0]
+
+    def test_runner_activity_in_prompt(self, weather_metric):
+        prompt = self._captured_prompt(weather_metric, self._make_user("runner"))
+        assert "runner" in prompt.lower()
+        assert "Activity context:" in prompt
+
+    def test_cyclist_activity_in_prompt(self, weather_metric):
+        prompt = self._captured_prompt(weather_metric, self._make_user("cyclist"))
+        assert "cyclist" in prompt.lower()
+        assert "Activity context:" in prompt
+
+    def test_farmer_activity_in_prompt(self, weather_metric):
+        prompt = self._captured_prompt(weather_metric, self._make_user("farmer"))
+        assert "farmer" in prompt.lower()
+        assert "Activity context:" in prompt
+
+    def test_photographer_activity_in_prompt(self, weather_metric):
+        prompt = self._captured_prompt(weather_metric, self._make_user("photographer"))
+        assert "photographer" in prompt.lower()
+        assert "Activity context:" in prompt
+
+    def test_parent_activity_in_prompt(self, weather_metric):
+        prompt = self._captured_prompt(weather_metric, self._make_user("parent"))
+        assert "parent" in prompt.lower()
+        assert "Activity context:" in prompt
+
+    def test_general_activity_no_extra_hint(self, weather_metric):
+        prompt = self._captured_prompt(weather_metric, self._make_user("general"))
+        assert "Activity context:" not in prompt

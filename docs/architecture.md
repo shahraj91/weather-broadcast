@@ -11,12 +11,20 @@ messages to a global user base at 7:30 AM in each user's local timezone.
 
 ```
 main.py
-  └─ scheduler.py             APScheduler — one cron job per IANA timezone
-       └─ run_timezone_job()
-            ├─ database/db.py              load active users for timezone
-            ├─ weather/fetcher.py          fetch forecast from Open-Meteo
-            ├─ messaging/formatter.py      generate message via Ollama HTTP API
-            └─ messaging/broadcaster.py   send via Twilio WhatsApp API, log result
+  ├─ scheduler.py             APScheduler — one cron job per IANA timezone
+  │    └─ run_timezone_job()
+  │         ├─ database/db.py                  load active users for timezone
+  │         ├─ weather/fetcher.py              fetch forecast from Open-Meteo
+  │         ├─ messaging/formatter.py          generate message via Ollama HTTP API
+  │         ├─ messaging/broadcaster.py        send via Twilio WhatsApp API, log result
+  │         └─ conversation/risk_engine.py     evaluate risks, send alert if triggered
+  │
+  └─ webhook.py  (daemon thread, when WEBHOOK_ENABLED=true)
+       └─ Flask POST /webhook
+            └─ conversation/handler.py
+                 ├─ database/db.py             look up user by phone
+                 ├─ weather/fetcher.py         fetch fresh forecast (WEATHER_QUERY / WEATHER_NOW)
+                 └─ Ollama HTTP API            detect intent, generate reply
 ```
 
 ---
@@ -47,6 +55,10 @@ Schema is Postgres-compatible. Two tables:
 | `country_code` | TEXT | ISO 3166-1 alpha-2 |
 | `name` | TEXT | recipient's display name, used in the message greeting |
 | `active` | INTEGER | 0 = unsubscribed |
+| `sandbox_opted_in` | INTEGER | 1 = user has sent the Twilio sandbox join code |
+| `activity` | TEXT | e.g. `runner`, `cyclist`, `farmer`, `photographer`, `parent`, `general` |
+| `activity_notes` | TEXT | free-text notes used to personalise the morning message |
+| `conversation_context` | TEXT | last 3 exchanges stored as JSON for continuity |
 | `created_at` | TEXT | ISO timestamp |
 
 ### `send_logs`
@@ -55,7 +67,7 @@ Schema is Postgres-compatible. Two tables:
 |--------|------|-------|
 | `id` | INTEGER PK | auto-increment |
 | `user_id` | INTEGER FK | references `users.id` |
-| `status` | TEXT | `success` or `failed` |
+| `status` | TEXT | `success`, `failed`, `skipped`, or `risk_alert` |
 | `message_sid` | TEXT | Twilio message SID on success |
 | `error` | TEXT | error string on failure |
 | `retryable` | INTEGER | whether the failure could be retried |
@@ -88,11 +100,50 @@ The system prompt instructs the model to produce:
 1. A structured weather summary with a personalised greeting (uses `user.name`)
 2. A `🌟 Fun Fact:` section
 
+If the user has an `activity` set, an activity-specific hint is appended to the prompt (e.g. best run window for a runner, golden hour for a photographer). Activity `general` adds no hint.
+
 If Ollama is unreachable, times out, or returns an empty response, a static
 fallback template is used. The fallback is always present — message generation
 never raises to the caller unless the weather data itself is invalid.
 
 Custom exception: `FormatterError`.
+
+---
+
+## Risk alerts (`conversation/risk_engine.py`)
+
+After the morning message is sent, `check_risks(user, weather)` evaluates six rules:
+
+| Rule | Metric threshold | Imperial threshold |
+|------|-----------------|-------------------|
+| Extreme heat | temp_max > 35°C | temp_max > 95°F |
+| Dangerous cold | temp_min < −10°C | temp_min < 14°F |
+| Strong winds | wind_speed > 60 km/h | wind_speed > 37.3 mph |
+| Thunderstorm | condition contains "thunderstorm" | — |
+| Dense fog | humidity > 90% AND fog in condition | — |
+| Heat index | temp_max > 30°C AND humidity > 70% | temp_max > 86°F AND humidity > 70% |
+
+If any risks are found, `format_risk_alert()` generates a `⚠️ Weather Alert` message via Ollama (static fallback if Ollama fails) and sends it as a second Twilio message, logged with `status="risk_alert"`.
+
+---
+
+## Two-way conversation (`conversation/handler.py`, `webhook.py`)
+
+`webhook.py` is a Flask app started as a `daemon=True` thread when `WEBHOOK_ENABLED=true`. It receives Twilio `POST /webhook` requests and passes the cleaned phone number and message body to `conversation/handler.py`.
+
+`handle(phone, message_text)` classifies intent via Ollama into one of five categories:
+
+| Intent | Action |
+|--------|--------|
+| `WEATHER_QUERY` | Fetch fresh forecast, answer question with Ollama |
+| `ACTIVITY_UPDATE` | Extract activity + notes via Ollama, save to DB |
+| `WEATHER_NOW` | Fetch fresh forecast, return current conditions directly |
+| `UNSUBSCRIBE` | Call `db.deactivate_user(phone)` |
+| `GENERAL` | Pass to Ollama with user context for a helpful reply |
+
+After every exchange the last 3 pairs of messages are persisted as JSON in `users.conversation_context`.
+
+`GET /health` returns `{"status": "ok"}` for liveness checks.
 
 ---
 
@@ -127,6 +178,8 @@ Users are never asked to set their unit preference.
 | `list_users.py` | Query users by active status, name, or phone |
 | `list_sends.py` | View send history; filter by user, status, or date |
 | `send_now.py` | Manually trigger a broadcast for a timezone, user, or all |
+| `opt_in_user.py` | Mark users as opted in to the Twilio sandbox |
+| `migrate_activity.py` | One-time migration to add activity columns to existing DBs |
 
 ---
 

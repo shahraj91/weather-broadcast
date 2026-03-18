@@ -28,9 +28,11 @@ tests/
 ├── test_unit_resolver.py      # utils/unit_resolver.py
 ├── test_db.py                 # database/db.py
 ├── test_fetcher.py            # weather/fetcher.py
-├── test_formatter.py          # messaging/formatter.py
+├── test_formatter.py          # messaging/formatter.py (incl. activity hints)
 ├── test_broadcaster.py        # messaging/broadcaster.py
-└── test_scheduler.py          # scheduler.py
+├── test_scheduler.py          # scheduler.py
+├── test_risk_engine.py        # conversation/risk_engine.py
+└── test_handler.py            # conversation/handler.py
 ```
 
 ---
@@ -98,6 +100,12 @@ tests/
 | MF-07 | Output exceeds 300 words | Logs warning (not hard fail) |
 | MF-08 | Prompt injection in weather data | Input sanitised before prompt |
 | MF-09 | `name` passed to `generate()` | Greeting in message uses recipient's name |
+| MF-10 | Activity = `runner` | Prompt contains runner-specific hint |
+| MF-11 | Activity = `cyclist` | Prompt contains cyclist-specific hint |
+| MF-12 | Activity = `farmer` | Prompt contains farmer-specific hint |
+| MF-13 | Activity = `photographer` | Prompt contains photographer-specific hint |
+| MF-14 | Activity = `parent` | Prompt contains parent-specific hint |
+| MF-15 | Activity = `general` | No `Activity context:` added to prompt |
 
 ### 3.6 Broadcaster (`test_broadcaster.py`)
 
@@ -120,6 +128,39 @@ tests/
 | SC-03 | New user added after start | New job registered dynamically |
 | SC-04 | Job fires at correct UTC equivalent | UTC time matches 07:30 local |
 | SC-05 | User deactivated mid-run | Skipped gracefully in job execution |
+
+### 3.8 Risk Engine (`test_risk_engine.py`)
+
+| Test ID | Description | Expected Outcome |
+|---------|-------------|-----------------|
+| RE-01 | temp_max = 35.1°C | Extreme heat alert returned |
+| RE-02 | temp_max = 35.0°C | No extreme heat alert |
+| RE-03 | temp_min = −10.1°C | Cold alert returned |
+| RE-04 | temp_min = −10.0°C | No cold alert |
+| RE-05 | wind_speed = 60.1 km/h | Wind alert returned |
+| RE-06 | wind_speed = 60.0 km/h | No wind alert |
+| RE-07 | condition = "Thunderstorm" | Thunderstorm alert returned |
+| RE-08 | condition = "Moderate rain" | No thunderstorm alert |
+| RE-09 | humidity = 91, condition = "Foggy" | Fog alert returned |
+| RE-10 | humidity = 90, condition = "Foggy" | No fog alert |
+| RE-11 | temp_max = 30.1°C, humidity = 71 | Heat index alert returned |
+| RE-12 | temp_max = 30.0°C, humidity = 75 | No heat index alert |
+| RE-13 | Normal conditions | Returns empty list |
+| RE-14 | Thunderstorm + wind > 60 km/h | Both alerts returned |
+| RE-15 | Imperial thresholds (95°F, 14°F, 37.3 mph, 86°F) | Correct imperial boundaries |
+
+### 3.9 Conversation Handler (`test_handler.py`)
+
+| Test ID | Description | Expected Outcome |
+|---------|-------------|-----------------|
+| CH-01 | Unknown phone number | Friendly "not registered" message |
+| CH-02 | Intent = WEATHER_QUERY | Fetches forecast, returns weather info |
+| CH-03 | Intent = ACTIVITY_UPDATE | Saves activity to DB, returns confirmation |
+| CH-04 | Intent = WEATHER_NOW | Returns current conditions immediately |
+| CH-05 | Intent = UNSUBSCRIBE | Deactivates user in DB, returns confirmation |
+| CH-06 | Intent = GENERAL | Returns non-empty Llama response |
+| CH-07 | Llama fails on GENERAL intent | Returns static fallback string |
+| CH-08 | Every intent | `update_conversation_context` called after reply |
 
 ---
 
@@ -208,3 +249,5 @@ pytest tests/ --cov=. --cov-report=term-missing
 | `messaging/formatter.py` | 85%+ | Medium |
 | `messaging/broadcaster.py` | 90%+ | High |
 | `scheduler.py` | 80%+ | Medium |
+| `conversation/risk_engine.py` | 90%+ | High |
+| `conversation/handler.py` | 85%+ | High |
