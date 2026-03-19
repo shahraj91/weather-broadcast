@@ -205,7 +205,7 @@ curl http://localhost:11434/api/tags
 **Test Ollama directly:**
 ```bash
 curl -s http://localhost:11434/api/generate \
-  -d '{"model":"llama3","prompt":"Say hello.","stream":false}' | python3 -m json.tool
+  -d '{"model":"llama3:8b","prompt":"Say hello.","stream":false}' | python3 -m json.tool
 ```
 
 **Check `.env` is loaded correctly:**
@@ -221,7 +221,7 @@ python3 -c "from database.db import Database; db = Database('./data/weather_broa
 **Start Ollama if not running:**
 ```bash
 ollama serve &
-ollama pull llama3   # first time only
+ollama pull llama3:8b   # first time only
 ```
 
 ---
