@@ -1,10 +1,11 @@
 """
 Scheduler — registers one APScheduler cron job per unique timezone.
-Each job fires at 07:30 in its local timezone, fetches weather for all
+Each job fires at 06:30 in its local timezone, fetches weather for all
 users in that timezone, formats a message via Llama, and broadcasts via Twilio.
 """
 
 import logging
+import time
 from zoneinfo import ZoneInfo  # stdlib in Python 3.9+
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -27,6 +28,40 @@ logger = logging.getLogger(__name__)
 SEND_HOUR   = 6
 SEND_MINUTE = 30
 
+WEATHER_FETCH_RETRIES    = 3   # total attempts (1 initial + 2 retries)
+WEATHER_FETCH_RETRY_DELAY = 30  # seconds between attempts
+
+
+def _fetch_with_retry(user) -> dict:
+    """
+    Call get_forecast() with up to WEATHER_FETCH_RETRIES attempts.
+    Sleeps WEATHER_FETCH_RETRY_DELAY seconds between attempts.
+    Re-raises WeatherFetchError if all attempts fail.
+    """
+    last_error = None
+    for attempt in range(1, WEATHER_FETCH_RETRIES + 1):
+        try:
+            return get_forecast(
+                lat=user.lat,
+                lon=user.lon,
+                unit_system=user.unit_system,
+                timezone=user.timezone,
+            )
+        except WeatherFetchError as e:
+            last_error = e
+            if attempt < WEATHER_FETCH_RETRIES:
+                logger.warning(
+                    "Weather fetch failed (attempt %d/%d) for user %s: %s — retrying in %ds",
+                    attempt, WEATHER_FETCH_RETRIES, user.id, e, WEATHER_FETCH_RETRY_DELAY,
+                )
+                time.sleep(WEATHER_FETCH_RETRY_DELAY)
+            else:
+                logger.error(
+                    "Weather fetch failed (attempt %d/%d) for user %s: %s — giving up",
+                    attempt, WEATHER_FETCH_RETRIES, user.id, e,
+                )
+    raise last_error
+
 
 def _send_to_user(user, db: Database) -> str:
     """
@@ -35,12 +70,7 @@ def _send_to_user(user, db: Database) -> str:
     Returns 'success', 'failed', or 'skipped'.
     """
     try:
-        weather = get_forecast(
-            lat=user.lat,
-            lon=user.lon,
-            unit_system=user.unit_system,
-            timezone=user.timezone,
-        )
+        weather = _fetch_with_retry(user)
         message = generate(weather, user=user)
         sid = broadcaster.send_to_user(user, message)
         db.log_send(SendLog(
@@ -144,7 +174,7 @@ def run_user_job(user, db_path: str):
 
 def run_timezone_job(timezone: str, db_path: str):
     """
-    Called by APScheduler at 07:30 for a specific timezone.
+    Called by APScheduler at 06:30 for a specific timezone.
     Fetches weather + sends message to every active user in that timezone.
     """
     logger.info("▶ Job started for timezone: %s", timezone)
@@ -242,7 +272,7 @@ class WeatherScheduler:
         )
 
         self._registered_timezones.add(timezone)
-        logger.info("Registered job for timezone: %s (07:%02d local)", timezone, SEND_MINUTE)
+        logger.info("Registered job for timezone: %s (06:%02d local)", timezone, SEND_MINUTE)
 
     def load_timezones_from_db(self):
         """Read all active timezones from the DB and register jobs."""

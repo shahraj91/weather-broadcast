@@ -89,7 +89,7 @@ python3 send_now.py +<country_code><number>   # send to a specific user by phone
 python3 send_now.py America/Los_Angeles       # send to all users in a timezone
 ```
 
-> Bypasses the 7:30 AM scheduler — runs immediately. Safe for testing.
+> Bypasses the 6:30 AM scheduler — runs immediately. Safe for testing.
 
 ---
 
@@ -143,7 +143,8 @@ python3 migrate_sandbox.py
 ## 🕐 Running the Scheduler
 
 ```bash
-# Start (blocks — sends at 7:30 AM per user's local timezone)
+# Start (blocks — sends at 6:30 AM per user's local timezone)
+# Weather fetch is retried up to 3 times with a 30s delay before giving up
 python3 main.py
 
 # Stop
@@ -349,7 +350,7 @@ curl -X POST "http://localhost:5000/metrics/reset?name=messages_failed_total&api
 All key events emit JSON log lines:
 ```json
 {
-  "timestamp": "2026-03-18T07:30:00Z",
+  "timestamp": "2026-03-18T06:30:00Z",
   "event": "message_sent",
   "user": "+1818***3973",
   "timezone": "America/Los_Angeles",

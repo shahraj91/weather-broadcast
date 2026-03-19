@@ -3,7 +3,7 @@
 ## Summary
 
 Weather Broadcaster is a Python 3.12 service that sends personalised WhatsApp weather
-messages to a global user base at 7:30 AM in each user's local timezone.
+messages to a global user base at 6:30 AM in each user's local timezone.
 
 ---
 
@@ -32,7 +32,7 @@ main.py
 ## Scheduling
 
 One `CronTrigger` job is registered per distinct IANA timezone found in the database.
-Jobs fire at 07:30 local time. Adding a user in a new timezone causes the scheduler
+Jobs fire at 06:30 local time. Adding a user in a new timezone causes the scheduler
 to register a new job on the next restart (or if `scheduler.py` is reloaded).
 
 **Rule:** never create one job per user — only one job per timezone.
@@ -86,6 +86,10 @@ No API key is required. Returned fields: `temp_max`, `temp_min`, `condition`,
 `wind_speed`, `humidity`, with units adapted to the user's unit system.
 
 Custom exception: `WeatherFetchError`.
+
+`_fetch_with_retry(user)` in `scheduler.py` wraps `get_forecast()` with up to
+3 attempts and a 30-second delay between each. If all attempts fail, the
+`WeatherFetchError` is re-raised and the send is logged as `failed, retryable=True`.
 
 ---
 

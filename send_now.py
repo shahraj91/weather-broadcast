@@ -1,6 +1,6 @@
 """
 Manually trigger a weather broadcast for a specific timezone, phone, or name.
-Useful for testing without waiting for the 7:30 AM scheduler.
+Useful for testing without waiting for the 6:30 AM scheduler.
 
 Usage:
     python3 send_now.py                          # sends for all active timezones

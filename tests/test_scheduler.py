@@ -6,7 +6,7 @@ Uses BackgroundScheduler mode and mocked job execution — no blocking.
 import pytest
 from unittest.mock import patch, MagicMock, call
 from database.models import User
-from scheduler import WeatherScheduler, run_timezone_job
+from scheduler import WeatherScheduler, run_timezone_job, WEATHER_FETCH_RETRIES
 
 
 class TestWeatherScheduler:
@@ -167,7 +167,7 @@ class TestRunTimezoneJob:
         mock_send.assert_not_called()
 
     def test_weather_fetch_error_logs_failure_and_continues(self, tmp_path, imperial_user, metric_user):
-        """Weather fetch error for one user doesn't stop processing others."""
+        """Weather fetch error for one user (all retries exhausted) doesn't stop processing others."""
         db_path = str(tmp_path / "test.db")
 
         from database.db import Database
@@ -188,7 +188,8 @@ class TestRunTimezoneJob:
         def side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
+            # Fail all retries for user 1, then succeed for user 2
+            if call_count <= WEATHER_FETCH_RETRIES:
                 raise WeatherFetchError("API down")
             return {
                 "temp_max": 22, "temp_min": 13, "condition": "Clear sky",
@@ -198,9 +199,71 @@ class TestRunTimezoneJob:
 
         with patch("scheduler.get_forecast", side_effect=side_effect), \
              patch("scheduler.generate", return_value="Msg 🌟 Fun Fact: Cool!"), \
-             patch("scheduler.broadcaster.send_to_user", return_value="SM001"):
+             patch("scheduler.broadcaster.send_to_user", return_value="SM001"), \
+             patch("scheduler.time.sleep"):
 
             run_timezone_job(imperial_user.timezone, db_path)
 
-        # Second user should still be sent a message
-        assert call_count == 2
+        # User 1 exhausted all retries, user 2 succeeded on first attempt
+        assert call_count == WEATHER_FETCH_RETRIES + 1
+
+    def test_weather_fetch_succeeds_on_retry(self, tmp_path, imperial_user):
+        """Transient weather fetch failure recovers on a later attempt — message is sent."""
+        db_path = str(tmp_path / "test.db")
+
+        from database.db import Database
+        from weather.fetcher import WeatherFetchError
+        db = Database(db_path)
+        db.init()
+        db.add_user(User(
+            phone=imperial_user.phone, lat=imperial_user.lat, lon=imperial_user.lon,
+            timezone=imperial_user.timezone, unit_system="imperial",
+            sandbox_opted_in=True,
+        ))
+        db.close()
+
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise WeatherFetchError("Transient 504")
+            return {
+                "temp_max": 72, "temp_min": 55, "condition": "Clear sky",
+                "wind_speed": 10, "humidity": 60,
+                "unit_system": "imperial", "temp_unit": "°F", "wind_unit": "mph",
+            }
+
+        with patch("scheduler.get_forecast", side_effect=side_effect), \
+             patch("scheduler.generate", return_value="Good morning! 🌟 Fun Fact: Cool!"), \
+             patch("scheduler.broadcaster.send_to_user", return_value="SM001") as mock_send, \
+             patch("scheduler.time.sleep"):
+
+            run_timezone_job(imperial_user.timezone, db_path)
+
+        assert call_count == 2       # failed once, succeeded on second attempt
+        mock_send.assert_called_once()  # message was delivered
+
+    def test_weather_fetch_all_retries_exhausted_no_message_sent(self, tmp_path, imperial_user):
+        """When all retry attempts fail, no message is sent and send is logged as failed."""
+        db_path = str(tmp_path / "test.db")
+
+        from database.db import Database
+        from weather.fetcher import WeatherFetchError
+        db = Database(db_path)
+        db.init()
+        db.add_user(imperial_user)
+        db.close()
+
+        with patch("scheduler.get_forecast", side_effect=WeatherFetchError("504 every time")), \
+             patch("scheduler.generate") as mock_gen, \
+             patch("scheduler.broadcaster.send_to_user") as mock_send, \
+             patch("scheduler.time.sleep") as mock_sleep:
+
+            run_timezone_job(imperial_user.timezone, db_path)
+
+        mock_gen.assert_not_called()
+        mock_send.assert_not_called()
+        # sleep called between each attempt, but not after the final failure
+        assert mock_sleep.call_count == WEATHER_FETCH_RETRIES - 1

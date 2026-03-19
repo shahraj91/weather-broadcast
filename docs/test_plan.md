@@ -126,8 +126,10 @@ tests/
 | SC-01 | 3 users in 3 different timezones | 3 separate cron jobs created |
 | SC-02 | 5 users all in same timezone | 1 shared cron job created |
 | SC-03 | New user added after start | New job registered dynamically |
-| SC-04 | Job fires at correct UTC equivalent | UTC time matches 07:30 local |
+| SC-04 | Job fires at correct UTC equivalent | UTC time matches 06:30 local |
 | SC-05 | User deactivated mid-run | Skipped gracefully in job execution |
+| SC-06 | Weather fetch fails once, recovers on retry | Message sent; fetch called twice |
+| SC-07 | Weather fetch fails all retries | No message sent; logged as failed |
 
 ### 3.8 Risk Engine (`test_risk_engine.py`)
 

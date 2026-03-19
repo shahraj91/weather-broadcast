@@ -168,7 +168,7 @@ python3 main.py
 ```
 
 The scheduler registers one cron job per unique timezone in the database and runs
-continuously, firing at 07:30 local time for each timezone. Use `tmux` or `screen`
+continuously, firing at 06:30 local time for each timezone. Use `tmux` or `screen`
 in production to keep it running after terminal disconnect.
 
 ---
