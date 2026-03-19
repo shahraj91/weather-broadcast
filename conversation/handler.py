@@ -13,8 +13,11 @@ load_dotenv()
 
 from database.db import Database
 from weather.fetcher import get_forecast
+from utils.pii import mask_phone
 
 logger = logging.getLogger(__name__)
+
+_SAFE_FALLBACK = "Sorry, I couldn't generate a response. Please try again."
 
 DB_PATH       = os.getenv("DB_PATH", "./data/weather_broadcast.db")
 LLAMA_API_URL = os.getenv("LLAMA_API_URL", "http://localhost:11434/api/generate")
@@ -162,7 +165,7 @@ def handle(phone: str, message_text: str) -> str:
             )
 
         intent = _detect_intent(message_text)
-        logger.info("Intent for %s: %s", phone, intent)
+        logger.info("Intent for %s: %s", mask_phone(phone), intent)
 
         if intent == "WEATHER_QUERY":
             weather = get_forecast(
@@ -196,6 +199,18 @@ def handle(phone: str, message_text: str) -> str:
 
         else:  # GENERAL
             reply = _general_response(user, message_text)
+
+        # Safety check — ensure outbound reply is appropriate
+        try:
+            from messaging.safety import is_safe
+            if not is_safe(reply):
+                logger.warning(
+                    "Outbound reply to %s failed safety check — substituting fallback",
+                    mask_phone(phone),
+                )
+                reply = _SAFE_FALLBACK
+        except Exception as e:
+            logger.warning("Safety check error in handler: %s", e)
 
         _save_context(db, phone, message_text, reply)
         return reply

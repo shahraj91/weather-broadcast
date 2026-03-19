@@ -39,14 +39,17 @@ class TestGenerateWithLlama:
 
     def test_mf03_llama_response_returned_as_message(self, weather_metric):
         """MF-03: Non-empty Llama response is returned directly (with header prepended)."""
+        # Output includes temp values and condition keyword so hallucination check passes.
+        # Safety check is disabled to avoid network calls and ensure exact equality.
         llama_output = (
-            "Great day today! 🌤️ Highs of 22°C, lows of 13°C.\n\n"
+            "Great day today with partly cloudy skies! 🌤️ Highs of 22°C, lows of 13°C.\n\n"
             "🌟 Fun Fact: Water can exist as solid, liquid, and gas all at the same time!"
         )
         expected = "📬 Daily Weather Update from Raj\n\n" + llama_output
         with patch("messaging.formatter._call_llama") as mock_llama:
-            mock_llama.return_value = llama_output
-            result = generate(weather_metric)
+            with patch.dict("os.environ", {"SAFETY_CHECK_ENABLED": "false"}):
+                mock_llama.return_value = llama_output
+                result = generate(weather_metric)
 
         assert result == expected
 
@@ -182,3 +185,61 @@ class TestActivityHints:
     def test_general_activity_no_extra_hint(self, weather_metric):
         prompt = self._captured_prompt(weather_metric, self._make_user("general"))
         assert "Activity context:" not in prompt
+
+
+class TestHallucinationGuard:
+    """Verify that the hallucination guard falls back to static when temps/condition are missing."""
+
+    def test_hallucination_triggers_when_temp_not_in_message(self, weather_metric):
+        """HG-01: Falls back to static template when Llama output omits temperature values."""
+        # weather_metric has temp_max=22.0, temp_min=13.0, condition="Partly cloudy"
+        llama_output = (
+            "What a beautiful day! ☀️ Enjoy the sunshine.\n\n"
+            "🌟 Fun Fact: The Sun is about 150 million kilometres from Earth!"
+        )
+        with patch("messaging.formatter._call_llama") as mock_llama:
+            with patch.dict("os.environ", {
+                "HALLUCINATION_CHECK_ENABLED": "true",
+                "SAFETY_CHECK_ENABLED": "false",
+            }):
+                mock_llama.return_value = llama_output
+                result = generate(weather_metric)
+
+        # Llama output was rejected; static fallback contains the actual temp values
+        assert "22" in result
+        assert "13" in result
+        assert llama_output not in result
+
+    def test_hallucination_passes_when_temps_present(self, weather_metric):
+        """HG-02: Llama output is accepted when it contains the correct temperature values."""
+        llama_output = (
+            "Good morning! Partly cloudy today with a high of 22°C and low of 13°C. 🌤️\n\n"
+            "🌟 Fun Fact: Clouds float because the water droplets in them are tiny!"
+        )
+        expected = "📬 Daily Weather Update from Raj\n\n" + llama_output
+        with patch("messaging.formatter._call_llama") as mock_llama:
+            with patch.dict("os.environ", {
+                "HALLUCINATION_CHECK_ENABLED": "true",
+                "SAFETY_CHECK_ENABLED": "false",
+            }):
+                mock_llama.return_value = llama_output
+                result = generate(weather_metric)
+
+        assert result == expected
+
+    def test_hallucination_check_disabled_skips_validation(self, weather_metric):
+        """HG-03: HALLUCINATION_CHECK_ENABLED=false returns Llama output even without temps."""
+        llama_output = (
+            "What a beautiful sunny day! ☀️\n\n"
+            "🌟 Fun Fact: The Sun is about 150 million kilometres from Earth!"
+        )
+        with patch("messaging.formatter._call_llama") as mock_llama:
+            with patch.dict("os.environ", {
+                "HALLUCINATION_CHECK_ENABLED": "false",
+                "SAFETY_CHECK_ENABLED": "false",
+            }):
+                mock_llama.return_value = llama_output
+                result = generate(weather_metric)
+
+        # Hallucination check skipped — Llama output is accepted despite missing temps
+        assert llama_output in result

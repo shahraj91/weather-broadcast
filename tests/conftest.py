@@ -4,8 +4,26 @@ All external dependencies are mocked so tests run offline with no credentials.
 """
 
 import pytest
+from unittest.mock import patch, MagicMock
 from database.db import Database
 from database.models import User
+
+
+@pytest.fixture(autouse=True)
+def _safety_always_passes(request):
+    """
+    For every test file that is NOT test_safety.py, patch is_safe() to always
+    return True. This prevents the safety Llama call from reaching a live Ollama
+    instance and breaking unrelated tests.
+
+    Tests inside test_safety.py control their own safety mocks explicitly.
+    """
+    if "test_safety" in request.fspath.basename:
+        yield   # safety tests own their mocks
+        return
+
+    with patch("messaging.safety.is_safe", return_value=True):
+        yield
 
 
 # ── Users ──────────────────────────────────────────────────────

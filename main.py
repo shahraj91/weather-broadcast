@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 from database.db import Database
 from scheduler import WeatherScheduler
 from webhook import app as flask_app
+from utils.log import structured_log
+from utils.alerting import check_ollama_health, send_admin_alert
 
 
 def main():
@@ -37,11 +39,33 @@ def main():
     # Ensure DB and tables exist
     db = Database(db_path)
     db.init()
+    timezones = db.get_all_timezones() or []
     db.close()
 
     logger.info("=" * 60)
     logger.info("  ☀️  Weather Broadcast System starting up")
     logger.info("=" * 60)
+
+    # Structured startup log
+    structured_log(
+        "startup",
+        timezones=sorted(timezones),
+        timezone_count=len(timezones),
+        webhook_enabled=webhook_enabled,
+        safety_check_enabled=os.getenv("SAFETY_CHECK_ENABLED", "true").lower() == "true",
+        hallucination_check_enabled=os.getenv("HALLUCINATION_CHECK_ENABLED", "true").lower() == "true",
+    )
+
+    # Ollama health check
+    if not check_ollama_health():
+        structured_log("ollama_unreachable", level="ERROR",
+                       detail="Ollama is unreachable at startup — static fallback will be used")
+        send_admin_alert(
+            "⚠️ System Alert: Ollama is unreachable at startup. "
+            "Weather messages will use static fallback until resolved."
+        )
+    else:
+        logger.info("Ollama health check passed")
 
     if webhook_enabled:
         flask_thread = threading.Thread(

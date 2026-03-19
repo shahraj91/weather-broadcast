@@ -18,17 +18,21 @@ from messaging.formatter import generate, FormatterError
 from messaging import broadcaster
 from messaging.broadcaster import BroadcasterError, SandboxOptInError
 from conversation.risk_engine import check_risks, format_risk_alert
+from utils.pii import mask_phone
+from utils.log import structured_log
+from utils.metrics import increment
 
 logger = logging.getLogger(__name__)
 
-SEND_HOUR   = 7
+SEND_HOUR   = 6
 SEND_MINUTE = 30
 
 
-def _send_to_user(user, db: Database):
+def _send_to_user(user, db: Database) -> str:
     """
     Fetch weather, generate a message, send it, and log the result for a single user.
     All exceptions are caught and logged; nothing is re-raised.
+    Returns 'success', 'failed', or 'skipped'.
     """
     try:
         weather = get_forecast(
@@ -45,7 +49,15 @@ def _send_to_user(user, db: Database):
             message_sid=sid,
             message_body=message,
         ))
-        logger.info("✓ Sent to %s (SID: %s)", user.phone, sid)
+        increment("messages_sent_total")
+        structured_log(
+            "message_sent",
+            user=mask_phone(user.phone),
+            timezone=getattr(user, "timezone", ""),
+            status="success",
+            sid=sid,
+        )
+        logger.info("✓ Sent to %s (SID: %s)", mask_phone(user.phone), sid)
 
         # Risk alert — sent as a separate message after the regular morning message
         risks = check_risks(user, weather)
@@ -59,9 +71,11 @@ def _send_to_user(user, db: Database):
                     message_sid=alert_sid,
                     message_body=alert,
                 ))
-                logger.info("⚠ Risk alert sent to %s (SID: %s)", user.phone, alert_sid)
+                logger.info("⚠ Risk alert sent to %s (SID: %s)", mask_phone(user.phone), alert_sid)
             except Exception as e:
                 logger.error("Risk alert failed for user %s: %s", user.id, e)
+
+        return "success"
 
     except SandboxOptInError:
         db.log_send(SendLog(
@@ -70,6 +84,7 @@ def _send_to_user(user, db: Database):
             error="sandbox_opt_in_required",
             retryable=False,
         ))
+        return "skipped"
 
     except WeatherFetchError as e:
         logger.error("Weather fetch failed for user %s: %s", user.id, e)
@@ -79,6 +94,8 @@ def _send_to_user(user, db: Database):
             error=f"WeatherFetchError: {e}",
             retryable=True,
         ))
+        increment("messages_failed_total")
+        return "failed"
 
     except FormatterError as e:
         logger.error("Formatter failed for user %s: %s", user.id, e)
@@ -88,6 +105,8 @@ def _send_to_user(user, db: Database):
             error=f"FormatterError: {e}",
             retryable=True,
         ))
+        increment("messages_failed_total")
+        return "failed"
 
     except BroadcasterError as e:
         logger.error("Broadcast failed for user %s: %s", user.id, e)
@@ -97,6 +116,8 @@ def _send_to_user(user, db: Database):
             error=f"BroadcasterError: {e}",
             retryable=True,
         ))
+        increment("messages_failed_total")
+        return "failed"
 
     except Exception as e:
         logger.exception("Unexpected error for user %s: %s", user.id, e)
@@ -106,17 +127,19 @@ def _send_to_user(user, db: Database):
             error=f"UnexpectedError: {e}",
             retryable=False,
         ))
+        increment("messages_failed_total")
+        return "failed"
 
 
 def run_user_job(user, db_path: str):
     """Send a weather message to a single user. Used by send_now.py for name/phone lookups."""
-    logger.info("▶ Manual send for user: %s", user.phone)
+    logger.info("▶ Manual send for user: %s", mask_phone(user.phone))
     db = Database(db_path)
     try:
         _send_to_user(user, db)
     finally:
         db.close()
-        logger.info("◀ Manual send complete for user: %s", user.phone)
+        logger.info("◀ Manual send complete for user: %s", mask_phone(user.phone))
 
 
 def run_timezone_job(timezone: str, db_path: str):
@@ -135,8 +158,43 @@ def run_timezone_job(timezone: str, db_path: str):
 
         logger.info("Processing %d user(s) in %s", len(users), timezone)
 
+        success_count      = 0
+        failed_count       = 0
+        consecutive_fails  = 0
+
         for user in users:
-            _send_to_user(user, db)
+            status = _send_to_user(user, db)
+            if status == "success":
+                success_count += 1
+                consecutive_fails = 0
+            elif status == "failed":
+                failed_count += 1
+                consecutive_fails += 1
+            # skipped does not reset or increment consecutive_fails
+
+        total = success_count + failed_count
+
+        # Alert: too many consecutive failures in this run
+        if consecutive_fails > 3:
+            try:
+                from utils.alerting import send_admin_alert
+                send_admin_alert(
+                    f"⚠️ System Alert: {consecutive_fails} consecutive send failures "
+                    f"for timezone {timezone}. Check Twilio credentials and connectivity."
+                )
+            except Exception as e:
+                logger.error("Failed to send consecutive-failure alert: %s", e)
+
+        # Alert: fallback rate > 50% in this job run
+        if total > 0 and (failed_count / total) > 0.5:
+            try:
+                from utils.alerting import send_admin_alert
+                send_admin_alert(
+                    f"⚠️ System Alert: High failure rate for {timezone} — "
+                    f"{failed_count}/{total} sends failed this run."
+                )
+            except Exception as e:
+                logger.error("Failed to send fallback-rate alert: %s", e)
 
     finally:
         db.close()

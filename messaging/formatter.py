@@ -6,6 +6,7 @@ Falls back to a static template if Llama is unavailable or times out.
 """
 
 import os
+import time
 import logging
 import requests
 from typing import Optional
@@ -160,6 +161,61 @@ def _call_llama(prompt: str) -> Optional[str]:
         return None
 
 
+def _increment_metric(name: str) -> None:
+    """Increment a metric counter, silently ignoring import errors."""
+    try:
+        from utils.metrics import increment
+        increment(name)
+    except Exception:
+        pass
+
+
+def _try_record_latency(name: str, ms: float) -> None:
+    """Record a latency sample, silently ignoring import errors."""
+    try:
+        from utils.metrics import record_latency
+        record_latency(name, ms)
+    except Exception:
+        pass
+
+
+def validate_output(message: str, weather: dict) -> bool:
+    """
+    Verify that a Llama-generated message contains the expected weather data.
+
+    Checks:
+      - temp_max value appears within ±2 degrees (as an integer)
+      - temp_min value appears within ±2 degrees
+      - At least one keyword from the condition string appears in the message
+
+    Returns True if valid, False if hallucination detected.
+    """
+    temp_max  = weather.get("temp_max", 0)
+    temp_min  = weather.get("temp_min", 0)
+    condition = weather.get("condition", "")
+
+    def temp_present(temp: float) -> bool:
+        base = int(round(float(temp)))
+        return any(str(base + offset) in message for offset in range(-2, 3))
+
+    if not temp_present(temp_max):
+        return False
+    if not temp_present(temp_min):
+        return False
+
+    stop_words = {"and", "or", "the", "a", "an", "with", "of"}
+    keywords = [
+        w.lower() for w in condition.split()
+        if w.lower() not in stop_words and len(w) > 2
+    ]
+    if keywords:
+        msg_lower = message.lower()
+        if not any(kw in msg_lower for kw in keywords):
+            return False
+
+    return True
+
+
 def _static_fallback(weather: dict) -> str:
     """Plain-text fallback when Llama is unavailable."""
     temp_max   = weather["temp_max"]
@@ -213,7 +269,10 @@ def generate(weather: dict, user=None) -> str:
         raise FormatterError("Invalid weather data passed to formatter")
 
     user_prompt = _build_user_prompt(weather, user)
+
+    _t0 = time.time()
     message = _call_llama(user_prompt)
+    _try_record_latency("llama_latency_ms", (time.time() - _t0) * 1000)
 
     header = "📬 Daily Weather Update from Raj\n\n"
 
@@ -229,6 +288,21 @@ def generate(weather: dict, user=None) -> str:
         word_count = len(message.split())
         if word_count > 300:
             logger.warning("Message exceeds 300 words (%d) — consider tuning the prompt", word_count)
+
+        # Hallucination guard — verify output matches the actual weather data
+        if os.getenv("HALLUCINATION_CHECK_ENABLED", "true").lower() == "true":
+            if not validate_output(message, weather):
+                logger.warning(
+                    "Hallucination detected — falling back to static template"
+                )
+                _increment_metric("hallucination_fallbacks_total")
+                message = None
+
+    if message:
+        # Safety check — pass through content safety filter
+        if os.getenv("SAFETY_CHECK_ENABLED", "true").lower() == "true":
+            from messaging.safety import apply_safety
+            message = apply_safety(message, _static_fallback(weather))
         return header + message
 
     logger.info("Using static fallback message")

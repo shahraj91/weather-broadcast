@@ -13,6 +13,8 @@ from twilio.base.exceptions import TwilioRestException
 from dotenv import load_dotenv
 load_dotenv()
 
+from utils.pii import mask_phone
+
 logger = logging.getLogger(__name__)
 
 SEND_DELAY_SECONDS = 0.5    # Pause between each send (Twilio free tier: ~1 msg/sec)
@@ -82,7 +84,7 @@ def send(phone: str, message: str, client: Optional[Client] = None) -> str:
                 to=whatsapp_to,
                 body=message,
             )
-            logger.info("Sent to %s — SID: %s", phone, msg.sid)
+            logger.info("Sent to %s — SID: %s", mask_phone(phone), msg.sid)
             return msg.sid
 
         except TwilioRestException as e:
@@ -93,18 +95,18 @@ def send(phone: str, message: str, client: Optional[Client] = None) -> str:
             backoff = RETRY_BASE_DELAY * (2 ** (attempt - 1))
             logger.warning(
                 "Send failed (attempt %d/%d) to %s: %s — retrying in %ds",
-                attempt, MAX_RETRIES, phone, e.msg, backoff
+                attempt, MAX_RETRIES, mask_phone(phone), e.msg, backoff
             )
             if attempt < MAX_RETRIES:
                 time.sleep(backoff)
 
         except Exception as e:
             last_error = e
-            logger.error("Unexpected error sending to %s: %s", phone, e)
+            logger.error("Unexpected error sending to %s: %s", mask_phone(phone), e)
             break
 
     raise BroadcasterError(
-        f"Failed to send to {phone} after {MAX_RETRIES} attempts: {last_error}"
+        f"Failed to send to {mask_phone(phone)} after {MAX_RETRIES} attempts: {last_error}"
     )
 
 
@@ -127,9 +129,9 @@ def send_to_user(user, message: str, client: Optional[Client] = None) -> str:
         BroadcasterError:  If send fails after all retries.
     """
     if not user.sandbox_opted_in:
-        logger.warning("Skipping %s — sandbox opt-in required", user.phone)
+        logger.warning("Skipping %s — sandbox opt-in required", mask_phone(user.phone))
         raise SandboxOptInError(
-            f"Skipping {user.phone} — sandbox opt-in required"
+            f"Skipping {mask_phone(user.phone)} — sandbox opt-in required"
         )
     return send(user.phone, message, client=client)
 

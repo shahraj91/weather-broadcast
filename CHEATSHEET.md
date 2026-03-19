@@ -272,3 +272,98 @@ Risk alerts are sent as a **separate message** immediately after the morning bro
 ```bash
 python3 list_sends.py --all   # risk_alert entries visible here
 ```
+
+---
+
+## 🔒 Safety & Security
+
+### Hallucination Check
+```bash
+# Enable (default)
+HALLUCINATION_CHECK_ENABLED=true   # in .env
+
+# Disable (for testing / prompt tuning)
+HALLUCINATION_CHECK_ENABLED=false
+```
+When enabled, Llama output is validated against actual temp and condition values.
+Mismatches fall back to the static template and increment `hallucination_fallbacks_total`.
+
+### Content Safety Filter
+```bash
+# Enable (default)
+SAFETY_CHECK_ENABLED=true   # in .env
+
+# Disable
+SAFETY_CHECK_ENABLED=false
+```
+Two-layer check: keyword blocklist → Llama YES/NO appropriateness prompt.
+Unsafe messages are replaced with the static fallback.
+
+### Twilio Signature Validation
+```bash
+# .env for local development (ngrok URL changes each session)
+TWILIO_SIGNATURE_VALIDATION=false
+WEBHOOK_BASE_URL=https://your-ngrok-url.ngrok-free.dev
+
+# .env for production
+TWILIO_SIGNATURE_VALIDATION=true
+WEBHOOK_BASE_URL=https://your-stable-domain.com
+```
+Invalid signatures return HTTP 403 and are logged with a masked phone number.
+
+---
+
+## 📊 Observability
+
+### View Metrics Endpoint
+```bash
+# Check all counters and latency averages
+curl "http://localhost:5000/metrics?api_key=<METRICS_API_KEY>"
+```
+
+Response example:
+```json
+{
+  "messages_sent_total": 42,
+  "messages_failed_total": 1,
+  "hallucination_fallbacks_total": 0,
+  "safety_blocks_total": 0,
+  "llama_latency_ms": 1240.5,
+  "fallback_rate": 0.0238,
+  "webhook_requests_total": 17,
+  "webhook_rejected_total": 0
+}
+```
+
+> Counters are **persistent** — stored in the same SQLite DB as the rest of
+> the app (`DB_PATH`). Values survive process restarts.
+
+### Reset a Counter
+```bash
+# Reset a single counter back to 0 (useful after a test run or incident)
+curl -X POST "http://localhost:5000/metrics/reset?name=messages_failed_total&api_key=<METRICS_API_KEY>"
+# → {"reset": "messages_failed_total", "value": 0}
+```
+
+### Structured Log Format
+All key events emit JSON log lines:
+```json
+{
+  "timestamp": "2026-03-18T07:30:00Z",
+  "event": "message_sent",
+  "user": "+1818***3973",
+  "timezone": "America/Los_Angeles",
+  "status": "success"
+}
+```
+
+### Tail and Parse Structured Logs
+```bash
+tail -f weather_broadcast.log | python3 -m json.tool
+```
+
+### Admin Alerts
+Set `ADMIN_PHONE` in `.env` to receive WhatsApp alerts for:
+- Ollama unreachable at startup
+- More than 3 consecutive send failures in a timezone
+- Failure rate > 50% in a single job run

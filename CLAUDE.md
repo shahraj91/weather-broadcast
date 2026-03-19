@@ -29,7 +29,12 @@ weather-broadcast/
 ├── messaging/broadcaster.py   # Twilio WhatsApp sender + retry logic
 ├── utils/timezone_resolver.py # lat/lon → IANA timezone (timezonefinder)
 ├── utils/unit_resolver.py     # lat/lon → imperial/metric (geopy)
+├── utils/pii.py               # mask_phone() / mask_user() — PII masking for logs
+├── utils/log.py               # structured_log() — JSON-structured log helper
+├── utils/metrics.py           # SQLite-backed counters (survive restarts) + rolling latency averages
+├── utils/alerting.py          # check_ollama_health() + send_admin_alert()
 ├── webhook.py                 # Flask webhook server for inbound WhatsApp
+├── messaging/safety.py        # Content safety filter (keyword + Llama YES/NO)
 ├── conversation/__init__.py
 ├── conversation/handler.py    # Intent detection + response engine
 ├── conversation/risk_engine.py # Risk rule evaluation + alert formatting
@@ -161,6 +166,72 @@ Risk alerts are evaluated after every morning message and sent as a separate Wha
 - Temperature high > 30°C (86°F) AND humidity > 70% — heat index
 
 **Behaviour:** sent immediately after the morning message as a separate Twilio send; logged in `send_logs` with `status="risk_alert"`.
+
+## Safety & Security
+
+### Hallucination Guard (`messaging/formatter.py`)
+After Llama generates a message, `validate_output()` checks that the actual
+`temp_max`, `temp_min` (within ±2°), and at least one keyword from the condition
+appear in the output. On failure the static template is used and
+`hallucination_fallbacks_total` is incremented.
+Toggle: `HALLUCINATION_CHECK_ENABLED` (default `true`).
+
+### Content Safety Filter (`messaging/safety.py`)
+`apply_safety(text, fallback)` runs two layers before any message is sent:
+1. Fast keyword filter — blocks on `BLOCKED_TERMS` (violence, self-harm, explicit, hate speech).
+2. Llama YES/NO check — sends a short prompt to Ollama; timeout defaults to safe.
+On failure, `safety_blocks_total` is incremented and the static fallback is used.
+The conversation handler also checks all outbound replies.
+Toggle: `SAFETY_CHECK_ENABLED` (default `true`).
+
+### Webhook Signature Validation (`webhook.py`)
+Every `POST /webhook` request is validated against the `X-Twilio-Signature` header
+using `twilio.request_validator.RequestValidator`. Invalid requests return 403.
+Set `WEBHOOK_BASE_URL` to your public ngrok/production URL.
+Toggle: `TWILIO_SIGNATURE_VALIDATION` (default `false` for local dev).
+
+### PII Masking in Logs (`utils/pii.py`)
+`mask_phone("+18183573973")` → `"+1818***3973"`.
+`mask_user(user)` → `"Name (+1818***3973)"`.
+Applied in: `scheduler.py`, `broadcaster.py`, `handler.py`, `webhook.py`.
+
+## Observability
+
+### Metrics Endpoint
+`GET /metrics?api_key=<METRICS_API_KEY>` returns JSON with all counters.
+All counters are **persisted to the SQLite DB** (same `DB_PATH` file) and
+survive process restarts. The `llama_latency_ms` rolling average (last 100
+samples) is kept in memory and flushed to the DB after each sample.
+
+Available counters:
+- `messages_sent_total`, `messages_failed_total`
+- `hallucination_fallbacks_total`, `safety_blocks_total`
+- `llama_latency_ms` (rolling average of last 100 calls; last-known value readable after restart)
+- `fallback_rate` (computed: failed / sent)
+- `webhook_requests_total`, `webhook_rejected_total`
+
+To reset a counter: `POST /metrics/reset?name=<metric_name>&api_key=<METRICS_API_KEY>`
+Calls `metrics.reset(name)` — sets the DB value to 0 and clears the
+in-memory window for latency metrics.
+
+### Structured Logging (`utils/log.py`)
+`structured_log(event, **kwargs)` emits JSON log entries:
+```json
+{
+  "timestamp": "2026-03-18T07:30:00Z",
+  "event": "message_sent",
+  "user": "+1818***3973",
+  "timezone": "America/Los_Angeles",
+  "status": "success"
+}
+```
+
+### Admin Alerts (`utils/alerting.py`)
+`send_admin_alert(message)` sends a WhatsApp message to `ADMIN_PHONE` via Twilio.
+Triggered by:
+- Ollama unreachable at startup
+- Consecutive send failures > 3 for a timezone
+- Failure rate > 50% in a single job run
 
 ## Reference Docs
 - Architecture overview: `docs/architecture.md`
